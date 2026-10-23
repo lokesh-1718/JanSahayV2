@@ -1,5 +1,6 @@
 import { OperationEvent, type IOperationEvent } from '../models/index.js';
-import type { EventSeverity } from '@civicaid/shared';
+import { REALTIME_EVENTS, type EventSeverity } from '@civicaid/shared';
+import { emitRealtimeEvent } from './socketService.js';
 
 export async function logOperationEvent(
   type: string,
@@ -18,5 +19,13 @@ export async function logOperationEvent(
     metadata,
   });
 
+  emitRealtimeEvent(
+    REALTIME_EVENTS.OPERATION_EVENT_CREATED,
+    'OperationEvent',
+    event._id.toString(),
+    event,
+  );
+
   return event;
 }
+

@@ -13,13 +13,19 @@ import {
   Flame,
   Droplets,
   Snowflake,
+  MapPin,
 } from 'lucide-react';
-import { api } from './api.js';
 
-type Tab = 'overview' | 'donations' | 'deliveries' | 'shelters' | 'riders' | 'scenarios';
+import { api } from './api.js';
+import { socket } from './socket.js';
+import { DispatchMap } from './components/DispatchMap.js';
+
+type Tab = 'overview' | 'map' | 'donations' | 'deliveries' | 'shelters' | 'riders' | 'scenarios';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [socketConnected, setSocketConnected] = useState(false);
+
   const [summary, setSummary] = useState<any>({
     totalActiveBatches: 0,
     activeDeliveries: 0,
@@ -102,9 +108,47 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+
+    function onConnect() {
+      setSocketConnected(true);
+    }
+
+    function onDisconnect() {
+      setSocketConnected(false);
+    }
+
+    function onRealtimeEvent(_event: string, payload: any) {
+      // Instantly refresh authoritative state from backend
+
+      loadData();
+
+      // Show real-time notification
+      if (payload?.event === 'DELIVERY_REROUTED') {
+        showToast(`⚡ Real-Time: Delivery #${payload.entityId?.slice(-6)} rerouted to new shelter!`);
+      } else if (payload?.event === 'RIDER_DECLARED_AFK') {
+        showToast(`⚠️ Real-Time: Rider #${payload.entityId?.slice(-4)} marked AFK!`);
+      } else if (payload?.event === 'MATCH_PLAN_CREATED') {
+        showToast(`⚡ Real-Time: Match plan generated for batch!`);
+      }
+    }
+
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.onAny(onRealtimeEvent);
+
+    if (socket.connected) {
+      setSocketConnected(true);
+    }
+
     const timer = setInterval(loadData, 5000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.offAny(onRealtimeEvent);
+    };
   }, []);
+
 
   // ─── Actions ───────────────────────────────────────────────
   const handleResetDemo = async () => {
@@ -234,6 +278,15 @@ export default function App() {
           </button>
 
           <button
+            className={`nav-item ${activeTab === 'map' ? 'active' : ''}`}
+            onClick={() => setActiveTab('map')}
+          >
+            <MapPin size={18} />
+            <span>Live Map</span>
+            <span className="badge" style={{ background: '#10b981', color: 'white' }}>Live</span>
+          </button>
+
+          <button
             className={`nav-item ${activeTab === 'donations' ? 'active' : ''}`}
             onClick={() => setActiveTab('donations')}
           >
@@ -293,6 +346,7 @@ export default function App() {
           <div className="topbar-left">
             <h1 className="topbar-title">
               {activeTab === 'overview' && 'Operations Overview'}
+              {activeTab === 'map' && 'Geospatial Dispatch Map'}
               {activeTab === 'donations' && 'Donation Batches'}
               {activeTab === 'deliveries' && 'Delivery Tasks'}
               {activeTab === 'shelters' && 'Shelters & Demands'}
@@ -302,9 +356,17 @@ export default function App() {
           </div>
 
           <div className="topbar-right">
-            <div className="status-pill">
-              <span className="status-dot"></span>
-              <span>Backend Connected</span>
+            <div
+              className="status-pill"
+              style={{
+                borderColor: socketConnected ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)',
+              }}
+            >
+              <span
+                className="status-dot"
+                style={{ background: socketConnected ? '#10b981' : '#f59e0b' }}
+              ></span>
+              <span>{socketConnected ? 'Real-Time Connected' : 'Polling Backend'}</span>
             </div>
 
             <button className="btn btn-secondary btn-sm" onClick={() => handleAdvanceTime(15)}>
@@ -317,6 +379,7 @@ export default function App() {
             </button>
           </div>
         </header>
+
 
         <div className="page-view">
           {/* ─── TAB: OVERVIEW ────────────────────────────── */}
@@ -385,6 +448,30 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Geospatial Dispatch Fleet Map */}
+              <div className="panel">
+                <div className="panel-header">
+                  <div>
+                    <h2 className="panel-title">Geospatial Fleet & Dispatch Map</h2>
+                    <p className="panel-description">
+                      Real-time spatial visualization of Central Kitchen hub, shelters, riders, and dispatch routes
+                    </p>
+                  </div>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setActiveTab('map')}>
+                    <MapPin size={14} />
+                    <span>Expand Map View</span>
+                  </button>
+                </div>
+                <DispatchMap
+                  batches={batches}
+                  shelters={shelters}
+                  riders={riders}
+                  deliveries={deliveries}
+                  onSelectDelivery={() => setActiveTab('deliveries')}
+                  onSelectShelter={() => setActiveTab('shelters')}
+                />
+              </div>
+
               {/* Audit Event Timeline */}
               <div className="panel">
                 <div className="panel-header">
@@ -429,6 +516,38 @@ export default function App() {
               </div>
             </>
           )}
+
+          {/* ─── TAB: LIVE MAP ──────────────────────────────── */}
+          {activeTab === 'map' && (
+            <div className="panel">
+              <div className="panel-header">
+                <div>
+                  <h2 className="panel-title">Geospatial Fleet & Routing Command</h2>
+                  <p className="panel-description">
+                    Live telemetry tracking: Central Kitchen hub, shelters (Open/Full), rider fleet, and active delivery paths
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="btn btn-primary btn-sm" onClick={() => setActiveTab('scenarios')}>
+                    <PlayCircle size={14} />
+                    <span>Test Reroute on Map</span>
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ height: '620px' }}>
+                <DispatchMap
+                  batches={batches}
+                  shelters={shelters}
+                  riders={riders}
+                  deliveries={deliveries}
+                  onSelectDelivery={() => setActiveTab('deliveries')}
+                  onSelectShelter={() => setActiveTab('shelters')}
+                />
+              </div>
+            </div>
+          )}
+
 
           {/* ─── TAB: DONATIONS ───────────────────────────── */}
           {activeTab === 'donations' && (
@@ -971,9 +1090,106 @@ export default function App() {
                     Execute Scenario 4
                   </button>
                 </div>
+
+                {/* Scenario 5 */}
+                <div className="panel">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                    <div className="brand-icon" style={{ width: '32px', height: '32px', background: '#ef4444' }}>5</div>
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 600 }}>No Safe Alternative — Escalation</h3>
+                  </div>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '16px' }}>
+                    Closes all alternative shelters and marks destination FULL. When no safe shelter is reachable, engine transitions delivery to RECOVERY_REQUIRED.
+                  </p>
+                  <button
+                    className="btn btn-danger"
+                    style={{ width: '100%' }}
+                    onClick={async () => {
+                      try {
+                        // Mark other shelters FULL or CLOSED
+                        for (let i = 1; i < shelters.length; i++) {
+                          await api.closeShelter(shelters[i]._id);
+                        }
+                        const dList = await api.getDeliveries('OFFERED');
+                        if (dList.length > 0) {
+                          const target = dList[0];
+                          const rId = target.riderId?._id || target.riderId;
+                          await api.claimDelivery(target._id, rId);
+                          await api.updateDeliveryStatus(target._id, 'IN_TRANSIT');
+                          await api.markShelterFull(shelters[0]._id);
+                          showToast('Recovery escalation triggered: No compatible alternative available!');
+                          setActiveTab('deliveries');
+                        } else {
+                          showToast('Run matching first to generate active deliveries!');
+                        }
+                      } catch (err: any) {
+                        showToast(`Escalation error: ${err.message}`);
+                      }
+                    }}
+                  >
+                    Execute Scenario 5
+                  </button>
+                </div>
+              </div>
+
+              {/* Evidence & Decision Inspector */}
+              <div className="panel" style={{ marginTop: '24px' }}>
+                <div className="panel-header">
+                  <div>
+                    <h2 className="panel-title">Automated Decision Inspector & Rule Evidence</h2>
+                    <p className="panel-description">
+                      Authoritative backend rules enforcing deterministic safety, capacity, and lifecycle bounds
+                    </p>
+                  </div>
+                </div>
+
+                <div className="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Rule ID</th>
+                        <th>Safety Invariant</th>
+                        <th>Backend Engine Mechanism</th>
+                        <th>Verification Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><b>RULE-01</b></td>
+                        <td>Facility Compatibility</td>
+                        <td>Rejects RAW_RATION if shelter lacks clean water or cooking fuel. Rejects cold chain if shelter lacks refrigeration.</td>
+                        <td><span className="badge badge-success">✓ Enforced by Engine</span></td>
+                      </tr>
+                      <tr>
+                        <td><b>RULE-02</b></td>
+                        <td>Expiry &amp; Safe Arrival Buffer</td>
+                        <td>Guarantees <code>now + travelMinutes + 5min &lt; expiresAt</code>. Never dispatches spoiled perishable food.</td>
+                        <td><span className="badge badge-success">✓ Enforced by Engine</span></td>
+                      </tr>
+                      <tr>
+                        <td><b>RULE-03</b></td>
+                        <td>Capacity Splitting Bounds</td>
+                        <td><code>min(batchRemaining, demandRemaining, riderCapacity)</code> splits 180 meals across 40-capacity vehicles.</td>
+                        <td><span className="badge badge-success">✓ Enforced by Engine</span></td>
+                      </tr>
+                      <tr>
+                        <td><b>RULE-04</b></td>
+                        <td>Heartbeat Staleness Watchdog</td>
+                        <td>Automated watchdog detects silent riders after &gt;60s, reclaims task and triggers re-assignment.</td>
+                        <td><span className="badge badge-success">✓ Enforced by Engine</span></td>
+                      </tr>
+                      <tr>
+                        <td><b>RULE-05</b></td>
+                        <td>Mid-Transit Dynamic Rerouting</td>
+                        <td>When destination is marked FULL, in-transit deliveries auto-reroute to closest compatible alternative or escalate to RECOVERY.</td>
+                        <td><span className="badge badge-success">✓ Enforced by Engine</span></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
+
         </div>
       </main>
 
