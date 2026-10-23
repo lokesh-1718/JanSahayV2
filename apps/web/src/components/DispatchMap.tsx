@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -11,6 +11,8 @@ interface DispatchMapProps {
   onSelectShelter?: (id: string) => void;
 }
 
+type MapStyle = 'dark' | 'streets' | 'satellite';
+
 export const DispatchMap: React.FC<DispatchMapProps> = ({
   batches,
   shelters,
@@ -21,7 +23,9 @@ export const DispatchMap: React.FC<DispatchMapProps> = ({
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
-  const layerGroupRef = useRef<L.LayerGroup | null>(null);
+  const tileLayersRef = useRef<L.LayerGroup | null>(null);
+  const markerLayerGroupRef = useRef<L.LayerGroup | null>(null);
+  const [currentStyle, setCurrentStyle] = useState<MapStyle>('dark');
 
   // Initialize Map
   useEffect(() => {
@@ -35,23 +39,12 @@ export const DispatchMap: React.FC<DispatchMapProps> = ({
       attributionControl: false,
     });
 
-    // Tile layer setup (supports Mapbox / MapTiler or default CartoDB Dark Matter without requiring any key)
-    const mapboxToken = (import.meta as any).env?.VITE_MAPBOX_TOKEN || (import.meta as any).env?.VITE_MAP_API_KEY;
-    const tileUrl = mapboxToken
-      ? `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${mapboxToken}`
-      : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    const tileLayers = L.layerGroup().addTo(map);
+    const markerLayerGroup = L.layerGroup().addTo(map);
 
-    L.tileLayer(tileUrl, {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      tileSize: mapboxToken ? 512 : 256,
-      zoomOffset: mapboxToken ? -1 : 0,
-    }).addTo(map);
-
-    const layerGroup = L.layerGroup().addTo(map);
-
+    tileLayersRef.current = tileLayers;
+    markerLayerGroupRef.current = markerLayerGroup;
     mapInstanceRef.current = map;
-    layerGroupRef.current = layerGroup;
 
     return () => {
       map.remove();
@@ -59,10 +52,71 @@ export const DispatchMap: React.FC<DispatchMapProps> = ({
     };
   }, []);
 
-  // Update Layers when props change
+  // Update Tile Layers when currentStyle or token changes
+  useEffect(() => {
+    const tileGroup = tileLayersRef.current;
+    if (!tileGroup) return;
+
+    tileGroup.clearLayers();
+
+    const mapboxToken = (import.meta as any).env?.VITE_MAPBOX_TOKEN || (import.meta as any).env?.VITE_MAP_API_KEY;
+
+    if (mapboxToken && currentStyle === 'dark') {
+      // Mapbox Dark v11 when user provided a token
+      L.tileLayer(
+        `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${mapboxToken}`,
+        {
+          maxZoom: 19,
+          tileSize: 512,
+          zoomOffset: -1,
+        },
+      ).addTo(tileGroup);
+    } else if (currentStyle === 'dark') {
+      // Free Esri Dark Gray Canvas — High quality dark basemap, 100% free with NO API key needed
+      L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 16,
+          attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
+        },
+      ).addTo(tileGroup);
+
+      // Dark Gray reference labels (streets, districts, landmarks)
+      L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 16,
+        },
+      ).addTo(tileGroup);
+    } else if (currentStyle === 'streets') {
+      // Standard OpenStreetMap Streets — 100% free with NO API key needed
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(tileGroup);
+    } else if (currentStyle === 'satellite') {
+      // Esri Satellite Imagery + Boundary overlays — 100% free with NO API key needed
+      L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 18,
+          attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye',
+        },
+      ).addTo(tileGroup);
+
+      L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 18,
+        },
+      ).addTo(tileGroup);
+    }
+  }, [currentStyle]);
+
+  // Update Markers & Polylines when props change
   useEffect(() => {
     const map = mapInstanceRef.current;
-    const layerGroup = layerGroupRef.current;
+    const layerGroup = markerLayerGroupRef.current;
     if (!map || !layerGroup) return;
 
     layerGroup.clearLayers();
@@ -95,7 +149,9 @@ export const DispatchMap: React.FC<DispatchMapProps> = ({
       iconAnchor: [18, 18],
     });
 
-    const activeBatchCount = batches.filter((b) => b.status === 'AVAILABLE' || b.status === 'PARTIALLY_ALLOCATED').length;
+    const activeBatchCount = batches.filter(
+      (b) => b.status === 'AVAILABLE' || b.status === 'PARTIALLY_ALLOCATED',
+    ).length;
     L.marker(pickupLatLng, { icon: pickupIcon })
       .bindPopup(`
         <div style="color: #0f172a; padding: 4px; font-family: sans-serif;">
@@ -261,8 +317,65 @@ export const DispatchMap: React.FC<DispatchMapProps> = ({
   }, [batches, shelters, riders, deliveries, onSelectDelivery, onSelectShelter]);
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '480px', borderRadius: '12px', overflow: 'hidden' }}>
-      <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+    <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: '480px', borderRadius: '12px', overflow: 'hidden' }}>
+      <div ref={mapContainerRef} style={{ width: '100%', height: '100%', minHeight: '480px' }} />
+
+      {/* Style Selector Controls */}
+      <div
+        style={{
+          position: 'absolute',
+          top: '12px',
+          right: '12px',
+          background: 'rgba(15, 23, 42, 0.85)',
+          backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(255, 255, 255, 0.12)',
+          borderRadius: '8px',
+          padding: '4px',
+          display: 'flex',
+          gap: '4px',
+          zIndex: 1000,
+        }}
+      >
+        <button
+          className="btn btn-sm"
+          style={{
+            padding: '4px 8px',
+            fontSize: '0.72rem',
+            background: currentStyle === 'dark' ? 'var(--accent-primary)' : 'transparent',
+            color: currentStyle === 'dark' ? '#fff' : 'var(--text-muted)',
+            border: 'none',
+          }}
+          onClick={() => setCurrentStyle('dark')}
+        >
+          🌙 Dark
+        </button>
+        <button
+          className="btn btn-sm"
+          style={{
+            padding: '4px 8px',
+            fontSize: '0.72rem',
+            background: currentStyle === 'streets' ? 'var(--accent-primary)' : 'transparent',
+            color: currentStyle === 'streets' ? '#fff' : 'var(--text-muted)',
+            border: 'none',
+          }}
+          onClick={() => setCurrentStyle('streets')}
+        >
+          🗺️ Streets
+        </button>
+        <button
+          className="btn btn-sm"
+          style={{
+            padding: '4px 8px',
+            fontSize: '0.72rem',
+            background: currentStyle === 'satellite' ? 'var(--accent-primary)' : 'transparent',
+            color: currentStyle === 'satellite' ? '#fff' : 'var(--text-muted)',
+            border: 'none',
+          }}
+          onClick={() => setCurrentStyle('satellite')}
+        >
+          🛰️ Satellite
+        </button>
+      </div>
 
       {/* Floating Map Legend */}
       <div
