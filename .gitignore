@@ -1,0 +1,58 @@
+# OmniRush / local agent files
+.opencode/
+opencode.jsonc
+
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build output
+dist/
+build/
+out/
+coverage/
+.vite/
+.turbo/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs and runtime files
+*.log
+logs/
+tmp/
+temp/
+*.pid
+*.pid.lock
+
+# Test and tooling caches
+.cache/
+.eslintcache
+.parcel-cache/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local database and generated data
+*.sqlite
+*.sqlite3
+*.db
+data/
+uploads/
+
+# Package manager files that should not be committed accidentally
+*.tsbuildinfo
+npm-debug.log*
+bun-debug.log*
